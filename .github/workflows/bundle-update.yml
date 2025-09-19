@@ -21,7 +21,7 @@ jobs:
         
     - name: Install Dependencies
       run: |
-        pip install ShopifyAPI==12.0.0
+        pip install -r requirements.txt
         
     - name: Run Bundle Inventory Update
       env:
