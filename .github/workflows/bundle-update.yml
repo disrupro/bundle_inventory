@@ -1,0 +1,30 @@
+name: Update Bundle Inventory
+
+on:
+  schedule:
+    # Läuft jede Stunde um :05 (UTC)
+    - cron: '5 * * * *'
+  workflow_dispatch:  # Ermöglicht manuellen Start
+
+jobs:
+  update-inventory:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install Dependencies
+      run: |
+        pip install ShopifyAPI==12.0.0
+        
+    - name: Run Bundle Inventory Update
+      env:
+        SHOPIFY_SHOP_URL: ${{ secrets.SHOPIFY_SHOP_URL }}
+        SHOPIFY_API_TOKEN: ${{ secrets.SHOPIFY_API_TOKEN }}
+      run: python bundle_inventory.py
