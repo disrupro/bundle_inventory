@@ -60,48 +60,73 @@ def get_product_by_sku(sku):
                 return product, variant
     return None, None
 
-def get_inventory_quantity(variant_id):
-    """Bestand einer Variante holen"""
+def get_location_id_by_name(location_name):
+    """Location ID anhand des Namens finden"""
     try:
-        inventory_levels = shopify.InventoryLevel.find(inventory_item_ids=variant_id)
+        locations = shopify.Location.find()
+        for location in locations:
+            if location.name == location_name:
+                return location.id
+        print(f"⚠️  Lager '{location_name}' nicht gefunden!")
+        return None
+    except Exception as e:
+        print(f"❌ Fehler beim Abrufen der Lager: {e}")
+        return None
+
+def get_inventory_quantity(variant_id, location_id):
+    """Bestand einer Variante für ein bestimmtes Lager holen"""
+    try:
+        inventory_levels = shopify.InventoryLevel.find(
+            inventory_item_ids=variant_id,
+            location_ids=location_id
+        )
         if inventory_levels:
-            return sum(level.available for level in inventory_levels)
+            return inventory_levels[0].available or 0
         return 0
-    except:
+    except Exception as e:
+        print(f"⚠️  Fehler beim Abrufen des Bestands: {e}")
         return 0
 
-def update_inventory_quantity(variant, new_quantity):
-    """Bestand einer Variante aktualisieren"""
+def update_inventory_quantity(variant, new_quantity, location_id):
+    """Bestand einer Variante für ein bestimmtes Lager aktualisieren"""
     try:
-        # Hole alle Inventory Levels für diese Variante
-        inventory_levels = shopify.InventoryLevel.find(inventory_item_ids=variant.inventory_item_id)
+        # Hole aktuellen Bestand für das spezifische Lager
+        inventory_levels = shopify.InventoryLevel.find(
+            inventory_item_ids=variant.inventory_item_id,
+            location_ids=location_id
+        )
         
-        for level in inventory_levels:
-            # Berechne die Differenz
-            current_qty = level.available or 0
-            adjustment = new_quantity - current_qty
+        if not inventory_levels:
+            print(f"⚠️  Kein Inventory Level für {variant.sku} in Versandmanufaktur gefunden")
+            return False
             
-            if adjustment != 0:
-                # Erstelle Inventory Adjustment
-                adjustment_data = {
-                    "inventory_item_id": variant.inventory_item_id,
-                    "location_id": level.location_id,
-                    "available_adjustment": adjustment
-                }
-                
-                shopify.InventoryLevel.adjust(adjustment_data)
-                print(f"✓ {variant.sku}: {current_qty} → {new_quantity} (Δ{adjustment:+d})")
-                
+        level = inventory_levels[0]
+        current_qty = level.available or 0
+        adjustment = new_quantity - current_qty
+        
+        if adjustment != 0:
+            # Erstelle Inventory Adjustment für das spezifische Lager
+            adjustment_data = {
+                "inventory_item_id": variant.inventory_item_id,
+                "location_id": location_id,
+                "available_adjustment": adjustment
+            }
+            
+            shopify.InventoryLevel.adjust(adjustment_data)
+            print(f"✓ {variant.sku}: {current_qty} → {new_quantity} (Δ{adjustment:+d}) [Versandmanufaktur]")
+        else:
+            print(f"✓ {variant.sku}: Bestand unverändert ({new_quantity}) [Versandmanufaktur]")
+            
         return True
     except Exception as e:
         print(f"✗ Fehler beim Update von {variant.sku}: {e}")
         return False
 
-def calculate_bundle_stock(bundle_sku, components):
+def calculate_bundle_stock(bundle_sku, components, location_id):
     """Berechnet verfügbaren Bundle-Bestand basierend auf Komponenten"""
     min_possible = float('inf')
     
-    print(f"\n📦 Berechne {bundle_sku}:")
+    print(f"\n📦 Berechne {bundle_sku} [Versandmanufaktur]:")
     
     for component in components:
         component_sku = component['sku']
@@ -113,7 +138,7 @@ def calculate_bundle_stock(bundle_sku, components):
             print(f"  ⚠️  Komponente {component_sku} nicht gefunden!")
             return 0
             
-        current_stock = get_inventory_quantity(variant.inventory_item_id)
+        current_stock = get_inventory_quantity(variant.inventory_item_id, location_id)
         possible_bundles = current_stock // needed_qty
         
         print(f"  • {component_sku}: {current_stock} verfügbar, {needed_qty} benötigt → {possible_bundles} Bundles möglich")
@@ -131,11 +156,19 @@ def main():
     try:
         setup_shopify()
         
+        # Hole Location ID für "Versandmanufaktur"
+        location_id = get_location_id_by_name("Versandmanufaktur")
+        if not location_id:
+            print("❌ Lager 'Versandmanufaktur' nicht gefunden! Abbruch.")
+            return
+        
+        print(f"📍 Verwende Lager: Versandmanufaktur (ID: {location_id})")
+        
         updated_bundles = 0
         
         for bundle_sku, components in BUNDLE_CONFIG.items():
             # Berechne verfügbaren Bestand für Bundle
-            available_qty = calculate_bundle_stock(bundle_sku, components)
+            available_qty = calculate_bundle_stock(bundle_sku, components, location_id)
             
             # Hole Bundle-Produkt
             bundle_product, bundle_variant = get_product_by_sku(bundle_sku)
@@ -143,15 +176,15 @@ def main():
                 print(f"⚠️  Bundle {bundle_sku} nicht in Shopify gefunden!")
                 continue
             
-            # Aktueller Bundle-Bestand
-            current_bundle_stock = get_inventory_quantity(bundle_variant.inventory_item_id)
+            # Aktueller Bundle-Bestand im Versandmanufaktur-Lager
+            current_bundle_stock = get_inventory_quantity(bundle_variant.inventory_item_id, location_id)
             
             # Update nur wenn sich was geändert hat
             if current_bundle_stock != available_qty:
-                if update_inventory_quantity(bundle_variant, available_qty):
+                if update_inventory_quantity(bundle_variant, available_qty, location_id):
                     updated_bundles += 1
             else:
-                print(f"✓ {bundle_sku}: Bestand unverändert ({available_qty})")
+                print(f"✓ {bundle_sku}: Bestand unverändert ({available_qty}) [Versandmanufaktur]")
         
         print(f"\n✅ Fertig! {updated_bundles} Bundles aktualisiert")
         
