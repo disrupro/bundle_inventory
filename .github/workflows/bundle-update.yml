@@ -6,25 +6,68 @@ on:
     - cron: '5 * * * *'
   workflow_dispatch:  # Ermöglicht manuellen Start
 
+permissions:
+  contents: write
+
 jobs:
   update-inventory:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
-      
+
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
-        
+
     - name: Install Dependencies
       run: |
         pip install -r requirements.txt
-        
+
     - name: Run Bundle Inventory Update
       env:
         SHOPIFY_SHOP_URL: ${{ secrets.SHOPIFY_SHOP_URL }}
         SHOPIFY_API_TOKEN: ${{ secrets.SHOPIFY_API_TOKEN }}
       run: python bundle_inventory.py
+
+    - name: Configure git
+      run: |
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
+
+    - name: Commit and push changes
+      run: |
+        git add -A
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+          exit 0
+        fi
+
+        git commit -m "chore: update bundle inventory [automated]"
+
+        # Retry logic for push with exponential backoff
+        max_attempts=4
+        attempt=1
+        delay=2
+
+        while [ $attempt -le $max_attempts ]; do
+          echo "Push attempt $attempt of $max_attempts..."
+
+          if git push; then
+            echo "Push successful!"
+            exit 0
+          fi
+
+          if [ $attempt -lt $max_attempts ]; then
+            echo "Push failed. Retrying in ${delay}s..."
+            sleep $delay
+            delay=$((delay * 2))
+          fi
+
+          attempt=$((attempt + 1))
+        done
+
+        echo "Push failed after $max_attempts attempts"
+        exit 1
